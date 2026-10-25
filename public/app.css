@@ -170,6 +170,7 @@ textarea { resize: vertical; min-height: 70px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
 .card h2 { font-size: 15px; margin: 0 0 12px; font-weight: 650; }
 .cards { display: grid; gap: 16px; }
+.cards > *, .grid2 > *, .dash-grid > * { min-width: 0; }
 .empty { padding: 40px 16px; text-align: center; color: var(--text-3); }
 
 /* ---------- Dashboard ---------- */
@@ -289,6 +290,23 @@ code, .code {
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px;
 }
 ol.steps { padding-left: 20px; margin: 0; display: grid; gap: 6px; }
+
+/* ---------- Connect ---------- */
+.banner { padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--accent); }
+.banner.ok { border-left-color: var(--good); }
+.banner.err { border-left-color: var(--critical); }
+.banner.warn { border-left-color: var(--warning); }
+.steps-bar { display: flex; gap: 10px; flex-wrap: wrap; }
+.step-state { padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2); }
+.step-state.done { border-color: var(--good); color: var(--good-ink); }
+.copy-box { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0; }
+.copy-box .copy-src { flex: 1; min-width: 0; overflow-x: auto; white-space: pre; display: block; padding: 7px 10px; margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12.5px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; }
+.fb-connect { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.fb-btn { background: #1877f2; border-color: #1877f2; color: #fff; text-decoration: none; padding: 10px 18px; font-weight: 600; font-size: 15px; }
+.fb-btn:hover { background: #166fe5; }
+.fb-btn.disabled { opacity: .5; cursor: not-allowed; }
+.sub-h { font-size: 13px; margin: 14px 0 4px; }
 
 /* ---------- Tables ---------- */
 table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }

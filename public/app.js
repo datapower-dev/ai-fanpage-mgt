@@ -103,14 +103,17 @@ const avatar = (name, pic, cls = '') =>
 const STATUS_LABEL = { open: 'Cần trả lời', replied: 'Đã trả lời', done: 'Đã xong' };
 
 /* ---------------- Router ---------------- */
-const views = { dashboard: renderDashboard, inbox: renderInbox, comments: renderComments, pages: renderPages, automation: renderAutomation, activity: renderActivity };
+const views = { connect: renderConnect, dashboard: renderDashboard, inbox: renderInbox, comments: renderComments, pages: renderPages, automation: renderAutomation, activity: renderActivity };
 
 function route() {
-  const [, view = 'dashboard', ...rest] = location.hash.split('/');
+  const [path, qs = ''] = location.hash.split('?');
+  let [, view = '', ...rest] = path.split('/');
+  // Lần đầu dùng (chưa có trang nào, không phải demo): mở màn hình Kết nối
+  if (!view) view = !state.me.demo && !state.pages.length ? 'connect' : 'dashboard';
   state.view = views[view] ? view : 'dashboard';
   if (state.view === 'inbox' && rest.length) state.selConv = decodeURIComponent(rest.join('/'));
   $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.view === state.view));
-  views[state.view]();
+  views[state.view](new URLSearchParams(qs));
 }
 window.addEventListener('hashchange', route);
 
@@ -162,7 +165,7 @@ async function renderDashboard() {
     $('#dashUpdated').textContent = 'Cập nhật ' + new Date().toLocaleTimeString('vi-VN');
     const noPages = !state.pages.length;
     $('#dash').innerHTML = `
-      ${noPages ? `<div class="card" style="margin-bottom:16px"><h2>Bắt đầu</h2><p>Chưa có trang nào. Vào <a href="#/pages">Trang</a> để kết nối fanpage bằng access token.</p></div>` : ''}
+      ${noPages ? `<div class="banner warn" style="margin-bottom:16px">Chưa kết nối fanpage nào. <a href="#/connect"><b>Mở màn hình Kết nối</b></a> để đăng nhập Facebook và kết nối Claude.</div>` : ''}
       <div class="kpis">
         ${kpi('Cần trả lời', s.open, `${s.overdue_1h} hội thoại chờ quá 1 giờ`, s.overdue_1h > 0)}
         ${kpi('Tin chưa đọc', s.unread)}
@@ -743,11 +746,209 @@ async function loadComments() {
   }
 }
 
+/* ================= CONNECT (Facebook + Claude) ================= */
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.append(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+  toast('Đã sao chép', 'ok');
+}
+const copyBox = (text, multiline = false) =>
+  `<div class="copy-box"><${multiline ? 'pre' : 'code'} class="copy-src">${esc(text)}</${multiline ? 'pre' : 'code'}><button class="btn sm copy-btn" type="button" data-copy="${esc(text)}">Sao chép</button></div>`;
+const stepState = (done, label) => `<span class="step-state ${done ? 'done' : 'todo'}">${done ? '✓' : '○'} ${esc(label)}</span>`;
+
+async function renderConnect(query = new URLSearchParams()) {
+  $('#main').innerHTML = `<div class="view"><div class="view-head"><h1>Kết nối</h1></div><div id="conn">Đang tải…</div></div>`;
+  let c;
+  try {
+    c = await api('/connect');
+  } catch (e) {
+    $('#conn').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    return;
+  }
+  if (state.view !== 'connect') return;
+  await loadPages().catch(() => {});
+  const appReady = c.has_app_id && c.has_app_secret;
+  const hasPages = state.pages.length > 0 && !c.demo;
+  const webhookOk = !!c.last_webhook_at;
+  const mcpOk = !!c.last_mcp_at;
+  const port = c.port;
+  const mcpPath = `${c.root}/mcp/server.js`;
+  const localUrl = `http://localhost:${port}`;
+  const claudeCodeCmd = `claude mcp add fanpage-manager -e FANPAGE_URL=${localUrl} -- node "${mcpPath}"`;
+  const desktopJson = JSON.stringify(
+    { mcpServers: { 'fanpage-manager': { command: 'node', args: [mcpPath], env: { FANPAGE_URL: localUrl } } } },
+    null,
+    2,
+  );
+  const tunnelCmd = `cloudflared tunnel --url ${localUrl}`;
+
+  const msg = query.get('fb_ok')
+    ? `<div class="banner ok">✓ Đã kết nối ${esc(query.get('fb_ok'))} fanpage. Hệ thống đang đồng bộ tin nhắn, bài viết và bình luận.${query.get('fb_warn') ? `<div class="small">${esc(query.get('fb_warn'))}</div>` : ''}</div>`
+    : query.get('fb_error')
+      ? `<div class="banner err">⚠ Kết nối Facebook chưa thành công: ${esc(query.get('fb_error'))}</div>`
+      : '';
+
+  $('#conn').innerHTML = `
+    ${c.demo ? `<div class="banner warn">Đang chạy <b>chế độ demo</b> với dữ liệu giả. Để kết nối fanpage thật, dừng server và chạy <span class="code">npm start</span>.</div>` : ''}
+    ${msg}
+    <div class="card" style="margin-bottom:16px">
+      <div class="steps-bar">
+        ${stepState(appReady, '1. App Facebook')}
+        ${stepState(hasPages, `2. Fanpage (${c.demo ? 'demo' : state.pages.length})`)}
+        ${stepState(webhookOk, '3. Webhook')}
+        ${stepState(mcpOk, '4. Claude (MCP)')}
+      </div>
+    </div>
+    <div class="cards">
+
+    <div class="card" id="step1">
+      <h2>1. Ứng dụng Facebook ${appReady ? '<span class="chip">đã cấu hình</span>' : ''}</h2>
+      <ol class="steps">
+        <li>Vào <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener noreferrer">developers.facebook.com/apps</a> → <b>Tạo ứng dụng</b>. Chọn trường hợp sử dụng quản lý Trang và nhắn tin Messenger (loại app <b>Business</b>).</li>
+        <li>Trong app, thêm sản phẩm <b>Facebook Login for Business</b> (hoặc Facebook Login) và <b>Messenger</b>.</li>
+        <li>Ở Facebook Login → Settings → <b>Valid OAuth Redirect URIs</b>, thêm địa chỉ sau:${copyBox(c.oauth_redirect_uri)}
+          <span class="muted small">${c.base_is_local ? 'Facebook cho phép localhost khi app ở chế độ Development. Khi dùng tên miền thật, nhập URL công khai bên dưới để địa chỉ này đổi theo.' : ''}</span></li>
+        <li>Mở Settings → Basic, sao chép <b>App ID</b> và <b>App Secret</b> vào ô dưới đây.</li>
+      </ol>
+      <form id="appForm" class="grid2" style="margin-top:12px">
+        <label class="field"><span class="field-label">App ID</span><input type="text" name="appId" value="${esc(c.app_id)}" placeholder="123456789012345" autocomplete="off"></label>
+        <label class="field"><span class="field-label">App Secret ${c.has_app_secret ? '<span class="muted">(đã lưu, để trống nếu không đổi)</span>' : ''}</span><input type="password" name="appSecret" placeholder="${c.has_app_secret ? '••••••••' : 'Dán App Secret'}" autocomplete="new-password"></label>
+        <label class="field"><span class="field-label">Verify Token cho webhook</span><input type="text" name="verifyToken" value="${esc(c.verify_token)}">${c.verify_token_default ? '<span class="err-text">Đang dùng giá trị mặc định, nên đổi thành chuỗi riêng.</span>' : ''}</label>
+        <label class="field"><span class="field-label">URL công khai (HTTPS, không bắt buộc)</span><input type="url" name="publicUrl" value="${esc(c.public_url)}" placeholder="https://ten-mien-cua-ban.com"></label>
+        <div class="muted small">Thông tin được lưu trong CSDL trên máy này. Giá trị trong .env được dùng khi ô để trống.</div>
+        <div class="row" style="justify-content:flex-end"><button class="btn primary" ${c.demo ? 'disabled' : ''}>Lưu cấu hình</button></div>
+      </form>
+    </div>
+
+    <div class="card" id="step2">
+      <h2>2. Kết nối fanpage</h2>
+      <div class="fb-connect">
+        <a class="btn fb-btn ${appReady && !c.demo ? '' : 'disabled'}" href="${appReady && !c.demo ? '/auth/facebook/start' : '#/connect'}" id="fbLogin">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M24 12.07C24 5.41 18.63 0 12 0S0 5.4 0 12.07C0 18.1 4.39 23.1 10.13 24v-8.44H7.08v-3.49h3.04V9.41c0-3.02 1.8-4.7 4.54-4.7 1.31 0 2.68.24 2.68.24v2.97h-1.5c-1.5 0-1.96.93-1.96 1.89v2.26h3.32l-.53 3.5h-2.8V24C19.62 23.1 24 18.1 24 12.07"/></svg>
+          Đăng nhập với Facebook
+        </a>
+        <div class="muted small">${
+          c.demo
+            ? 'Không dùng được trong chế độ demo.'
+            : appReady
+              ? 'Facebook sẽ hỏi bạn chọn fanpage và cấp quyền. Hãy chọn tất cả trang cần quản lý.'
+              : 'Hoàn tất bước 1 (App ID và App Secret) để bật nút này.'
+        }</div>
+      </div>
+      ${
+        state.pages.length
+          ? `<ul class="list-plain" style="margin-top:12px">${state.pages
+              .map(
+                (p) => `<li>${avatar(p.name, p.picture, 'sm')}<div style="flex:1;min-width:0"><b>${esc(p.name)}</b> <span class="muted small">${esc(p.id)}</span>
+              <div class="small">${p.subscribed ? '<span style="color:var(--good-ink)">✓ đã đăng ký webhook</span>' : '<span class="err-text">chưa đăng ký webhook</span>'} · đồng bộ ${p.last_sync ? timeAgo(p.last_sync) + ' trước' : 'chưa'}${p.last_error ? ` · <span class="err-text">${esc(p.last_error)}</span>` : ''}</div></div></li>`,
+              )
+              .join('')}</ul><div class="row" style="margin-top:8px"><a class="btn sm" href="#/pages">Quản lý trang →</a></div>`
+          : ''
+      }
+      <details style="margin-top:14px"><summary class="muted">Cách khác: dán access token thủ công</summary>
+        <div class="grid2" style="margin-top:10px">
+          <div class="field"><span class="field-label">User Access Token (nhập mọi trang bạn quản lý)</span>
+            <input type="password" id="userToken" placeholder="EAAG…" autocomplete="off">
+            <div class="row" style="margin-top:6px"><button class="btn sm" id="importPages" ${c.demo ? 'disabled' : ''}>Nhập các trang</button></div></div>
+          <div class="field"><span class="field-label">Page Access Token (một trang)</span>
+            <input type="password" id="pageToken" placeholder="EAAG…" autocomplete="off">
+            <div class="row" style="margin-top:6px"><button class="btn sm" id="addPage">Kết nối trang</button></div></div>
+        </div>
+        <p class="muted small">Lấy token trong <a href="https://developers.facebook.com/tools/explorer" target="_blank" rel="noopener noreferrer">Graph API Explorer</a> với các quyền: ${c.scopes.map((s) => `<span class="code">${esc(s)}</span>`).join(' ')}.</p>
+      </details>
+    </div>
+
+    <div class="card" id="step3">
+      <h2>3. Webhook (nhận tin nhắn tức thì) ${webhookOk ? `<span class="chip">nhận lần cuối ${timeAgo(c.last_webhook_at)} trước</span>` : ''}</h2>
+      ${
+        c.base_is_https
+          ? ''
+          : `<div class="banner warn small">Facebook chỉ gửi webhook tới địa chỉ <b>HTTPS công khai</b>. Trên máy cá nhân, tạo đường hầm rồi nhập URL nhận được vào ô "URL công khai" ở bước 1:${copyBox(tunnelCmd)}</div>`
+      }
+      <ol class="steps">
+        <li>Trong app Facebook → Messenger → Settings (hoặc Webhooks) → <b>Callback URL</b>:${copyBox(c.webhook_url)}</li>
+        <li><b>Verify Token</b>:${copyBox(c.verify_token)}</li>
+        <li>Đăng ký các trường: <span class="code">messages</span> <span class="code">messaging_postbacks</span> <span class="code">message_echoes</span> <span class="code">feed</span>.</li>
+        <li>Nhấn "Đăng ký webhook" ở từng trang trong mục <a href="#/pages">Trang</a> nếu trang chưa đăng ký.</li>
+      </ol>
+      <p class="muted small">Chưa có webhook thì hệ thống vẫn đồng bộ định kỳ, nhưng tin đến chậm hơn và trả lời tự động chưa chạy. Khi app ở chế độ Development, chỉ người có vai trò trong app nhắn được tới trang. Muốn nhận tin của mọi khách cần App Review cho quyền <span class="code">pages_messaging</span>.</p>
+    </div>
+
+    <div class="card" id="step4">
+      <h2>4. Kết nối Claude (MCP) ${mcpOk ? `<span class="chip">Claude gọi lần cuối ${timeAgo(c.last_mcp_at)} trước</span>` : ''}</h2>
+      <p>MCP server cho Claude đọc tin nhắn, soạn và gửi trả lời, xử lý bình luận và tạo luật tự động. Nó tự khởi động Fanpage Manager nếu server chưa chạy.</p>
+      <h3 class="sub-h">Claude Code</h3>
+      <p class="small">Mở Claude Code trong thư mục dự án: file <span class="code">.mcp.json</span> đã có sẵn, chỉ cần chấp nhận server <b>fanpage-manager</b>. Hoặc thêm cho mọi thư mục bằng lệnh:</p>
+      ${copyBox(claudeCodeCmd)}
+      <p class="small">Lệnh tắt có sẵn trong Claude Code: <span class="code">/tra-loi-khach</span> (soạn trả lời cho tin đang chờ) và <span class="code">/bao-cao-fanpage</span>.</p>
+      <h3 class="sub-h">Claude Desktop</h3>
+      <p class="small">Thêm vào file <span class="code">%APPDATA%\\Claude\\claude_desktop_config.json</span> rồi khởi động lại Claude Desktop:</p>
+      ${copyBox(desktopJson, true)}
+      ${state.me.auth_enabled ? '<p class="small err-text">Server đang đặt mật khẩu: thêm biến FANPAGE_PASSWORD (bằng ADMIN_PASSWORD) vào phần env.</p>' : ''}
+      <h3 class="sub-h">Thử hỏi Claude</h3>
+      <ul class="small">
+        <li>"Xem các tin nhắn đang chờ trên fanpage và soạn câu trả lời cho tôi duyệt."</li>
+        <li>"Bình luận nào chưa trả lời? Ẩn giúp tôi các bình luận spam."</li>
+        <li>"Tạo luật tự động trả lời khi khách hỏi phí ship."</li>
+      </ul>
+    </div>
+    </div>`;
+
+  $$('.copy-btn', $('#conn')).forEach((b) => b.addEventListener('click', () => copyText(b.dataset.copy)));
+  $('#fbLogin').addEventListener('click', (e) => {
+    if ($('#fbLogin').classList.contains('disabled')) {
+      e.preventDefault();
+      toast(c.demo ? 'Chế độ demo không kết nối Facebook thật' : 'Hãy nhập và lưu App ID, App Secret ở bước 1', 'err');
+      $('#step1').scrollIntoView({ behavior: 'smooth' });
+    }
+  });
+  $('#appForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(e.target));
+    try {
+      await api('/connect/app', { method: 'PUT', body });
+      toast('Đã lưu cấu hình ứng dụng Facebook', 'ok');
+      state.me = await api('/me');
+      renderConnect();
+    } catch (err) {
+      fail(err);
+    }
+  };
+  $('#importPages').onclick = async () => {
+    const token = $('#userToken').value.trim();
+    if (!token) return toast('Nhập User Access Token', 'err');
+    try {
+      const r = await api('/pages/import', { method: 'POST', body: { user_token: token } });
+      toast(`Đã nhập ${r.count} trang. Đang đồng bộ…`, 'ok');
+      renderConnect();
+    } catch (err) {
+      fail(err);
+    }
+  };
+  $('#addPage').onclick = async () => {
+    const token = $('#pageToken').value.trim();
+    if (!token && !c.demo) return toast('Nhập Page Access Token', 'err');
+    try {
+      const p = await api('/pages', { method: 'POST', body: { access_token: token } });
+      toast(`Đã kết nối ${p.name}${p.subscribed === false ? ' (chưa đăng ký được webhook)' : ''}. Đang đồng bộ…`, 'ok');
+      renderConnect();
+    } catch (err) {
+      fail(err);
+    }
+  };
+}
+
 /* ================= PAGES ================= */
 async function renderPages() {
   await loadPages().catch(() => {});
-  const me = state.me;
-  const origin = location.origin;
   $('#main').innerHTML = `<div class="view">
     <div class="view-head"><h1>Trang</h1><span class="spacer"></span><button class="btn" id="syncAll">⟳ Đồng bộ tất cả</button></div>
     <div class="cards">
@@ -774,30 +975,9 @@ async function renderPages() {
               .join('')
           : '<div class="card empty">Chưa kết nối trang nào</div>'
       }
-      <div class="grid2">
-        <div class="card">
-          <h2>Thêm trang bằng Page Access Token</h2>
-          <div class="field"><span class="field-label">Page Access Token</span><input type="password" id="pageToken" placeholder="EAAG…" autocomplete="off"></div>
-          <div class="row" style="margin-top:10px"><button class="btn primary" id="addPage">Kết nối trang</button></div>
-          <p class="muted small">Lấy trong Graph API Explorer: chọn App → User Token có quyền pages_messaging, pages_manage_metadata, pages_read_engagement, pages_manage_engagement, pages_show_list → chọn trang ở mục "Page Access Token".</p>
-        </div>
-        <div class="card">
-          <h2>Nhập tất cả trang từ User Token</h2>
-          <div class="field"><span class="field-label">User Access Token</span><input type="password" id="userToken" placeholder="EAAG…" autocomplete="off"></div>
-          <div class="row" style="margin-top:10px"><button class="btn primary" id="importPages">Nhập các trang</button></div>
-          <p class="muted small">${me.has_app_id ? 'Token sẽ được đổi sang loại dài hạn (60 ngày), và Page Token lấy từ đó không hết hạn.' : 'Đặt FB_APP_ID và FB_APP_SECRET trong .env để tự đổi sang token dài hạn.'}</p>
-        </div>
-      </div>
-      <div class="card">
-        <h2>Cấu hình Webhook trên Facebook</h2>
-        <ol class="steps">
-          <li>Webhook cần URL công khai <b>HTTPS</b>. Khi chạy trên máy cá nhân, dùng <span class="code">cloudflared tunnel --url http://localhost:${esc(location.port || 80)}</span> hoặc ngrok để có URL.</li>
-          <li>Vào developers.facebook.com → App → Messenger → Settings (hoặc Webhooks) → <b>Callback URL</b>: <span class="code">https://&lt;tên-miền-của-bạn&gt;/webhook</span> <span class="muted small">(hiện tại: ${esc(origin)}/webhook)</span></li>
-          <li><b>Verify Token</b>: giá trị <span class="code">FB_VERIFY_TOKEN</span> trong file .env ${me.verify_token_default ? '<span class="err-text">(bạn đang dùng giá trị mặc định, nên đổi)</span>' : ''}</li>
-          <li>Đăng ký các trường: <span class="code">messages</span> <span class="code">messaging_postbacks</span> <span class="code">message_echoes</span> <span class="code">feed</span>. Nút "Đăng ký webhook" ở từng trang sẽ gọi subscribed_apps giúp bạn.</li>
-          <li>${me.has_app_secret ? '✓ Đã đặt FB_APP_SECRET, chữ ký webhook được kiểm tra.' : '<span class="err-text">Chưa đặt FB_APP_SECRET: webhook không kiểm tra chữ ký. Nên đặt khi chạy thật.</span>'}</li>
-          <li>Khi App ở chế độ Development, chỉ người có vai trò trong App mới nhắn được tới trang. Muốn nhận tin của mọi khách cần App Review cho quyền pages_messaging (hoặc dùng cho chính trang của bạn với Standard Access).</li>
-        </ol>
+      <div class="card row" style="justify-content:space-between">
+        <div><b>Thêm fanpage</b><div class="muted small">Đăng nhập Facebook để chọn các trang cần quản lý, hoặc dán token.</div></div>
+        <a class="btn primary" href="#/connect">🔌 Mở màn hình Kết nối</a>
       </div>
     </div></div>`;
   $('#syncAll').onclick = async () => {
@@ -810,30 +990,6 @@ async function renderPages() {
       }
     }
     renderPages();
-  };
-  $('#addPage').onclick = async () => {
-    const token = $('#pageToken').value.trim();
-    if (!token && !state.me.demo) return toast('Nhập Page Access Token', 'err');
-    try {
-      const p = await api('/pages', { method: 'POST', body: { access_token: token } });
-      toast(`Đã kết nối ${p.name}${p.subscribed === false ? ' (chưa đăng ký được webhook)' : ''}. Đang đồng bộ dữ liệu…`, 'ok');
-      await loadPages();
-      renderPages();
-    } catch (e) {
-      fail(e);
-    }
-  };
-  $('#importPages').onclick = async () => {
-    const token = $('#userToken').value.trim();
-    if (!token) return toast('Nhập User Access Token', 'err');
-    try {
-      const r = await api('/pages/import', { method: 'POST', body: { user_token: token } });
-      toast(`Đã nhập ${r.count} trang. Đang đồng bộ…`, 'ok');
-      await loadPages();
-      renderPages();
-    } catch (e) {
-      fail(e);
-    }
   };
   $$('.page-card').forEach((card) => {
     const id = card.dataset.id;

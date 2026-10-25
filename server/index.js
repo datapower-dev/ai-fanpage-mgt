@@ -8,6 +8,10 @@ import { sseHandler } from './events.js';
 import { verifyHandler, receiveHandler } from './webhook.js';
 import { startScheduler } from './sync.js';
 import { seedDemo } from './demo.js';
+import { applyStoredAppConfig, oauthStart, oauthCallback } from './facebook.js';
+import { setSetting, nowIso } from './db.js';
+
+applyStoredAppConfig();
 
 const app = express();
 app.disable('x-powered-by');
@@ -25,6 +29,8 @@ app.use(
 // Webhook của Facebook: không yêu cầu mật khẩu
 app.get('/webhook', verifyHandler);
 app.post('/webhook', receiveHandler);
+// Facebook chuyển hướng về đây sau khi đăng nhập (được bảo vệ bằng mã state)
+app.get('/auth/facebook/callback', oauthCallback);
 
 // Bảo vệ phần còn lại bằng Basic Auth nếu có ADMIN_PASSWORD
 const sameSecret = (a, b) => {
@@ -44,6 +50,18 @@ app.use((req, res, next) => {
   if (bearer && sameSecret(bearer, config.adminPassword)) return next();
   res.set('WWW-Authenticate', 'Basic realm="Fanpage Manager", charset="UTF-8"');
   res.status(401).send('Cần mật khẩu quản trị');
+});
+
+app.get('/auth/facebook/start', oauthStart);
+
+// Ghi nhận lần cuối Claude gọi qua MCP (để màn hình Kết nối hiển thị trạng thái)
+let lastMcpWrite = 0;
+app.use('/api', (req, res, next) => {
+  if (req.get('x-fanpage-client') === 'mcp' && Date.now() - lastMcpWrite > 10_000) {
+    lastMcpWrite = Date.now();
+    setSetting('last_mcp_at', nowIso());
+  }
+  next();
 });
 
 app.get('/api/events', sseHandler);

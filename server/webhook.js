@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { config } from './config.js';
+import { setSetting, nowIso } from './db.js';
 import * as store from './store.js';
 import { ensureCustomerProfile } from './messaging.js';
 import { handleIncomingComment, handleIncomingMessage } from './autoreply.js';
@@ -41,6 +42,7 @@ export function receiveHandler(req, res) {
     return res.status(401).send('Bad signature');
   }
   res.status(200).send('EVENT_RECEIVED');
+  setSetting('last_webhook_at', nowIso());
   const body = req.body;
   if (!body || (body.object !== 'page' && body.object !== 'instagram')) return;
   for (const entry of body.entry || []) {

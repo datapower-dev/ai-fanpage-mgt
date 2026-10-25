@@ -23,6 +23,8 @@ export const config = {
   appSecret: process.env.FB_APP_SECRET || '',
   verifyToken: process.env.FB_VERIFY_TOKEN || 'fanpage-verify-token',
   adminPassword: process.env.ADMIN_PASSWORD || '',
+  // URL công khai (HTTPS) của server, dùng cho webhook và đăng nhập Facebook. Trống = lấy theo trình duyệt
+  publicUrl: (process.env.PUBLIC_URL || '').replace(/\/$/, ''),
   // Demo dùng file riêng để không lẫn với dữ liệu thật
   dbPath: path.resolve(root, demo ? process.env.DEMO_DB_PATH || path.join('data', 'demo.db') : process.env.DB_PATH || path.join('data', 'fanpage.db')),
   syncIntervalSec: Number(process.env.SYNC_INTERVAL_SEC ?? 120),

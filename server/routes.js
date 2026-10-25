@@ -7,6 +7,7 @@ import { sendMessage, replyComment, hideComment, deleteComment, markSeen, descri
 import { syncPage } from './sync.js';
 import { simulateIncoming, simulateComment } from './demo.js';
 import { renderTemplate } from './autoreply.js';
+import { connectionStatus, saveAppConfig, clearAppSecret, importPagesFromUserToken } from './facebook.js';
 
 export const api = Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -30,6 +31,19 @@ api.get('/me', (req, res) => {
     sync_interval_sec: config.syncIntervalSec,
     auth_enabled: !!config.adminPassword,
   });
+});
+
+/* ---------- Kết nối Facebook / Claude ---------- */
+api.get('/connect', (req, res) => res.json(connectionStatus(req)));
+api.put('/connect/app', (req, res) => {
+  if (config.demo) throw bad('Chế độ demo không kết nối Facebook thật. Hãy chạy "npm start".', 400);
+  saveAppConfig(req.body || {});
+  store.logActivity('app-config-saved', null, 'Đã lưu cấu hình ứng dụng Facebook');
+  res.json(connectionStatus(req));
+});
+api.delete('/connect/app-secret', (req, res) => {
+  clearAppSecret();
+  res.json(connectionStatus(req));
 });
 
 /* ---------- Trang ---------- */
@@ -64,32 +78,9 @@ api.post(
 api.post(
   '/pages/import',
   wrap(async (req, res) => {
-    let { user_token } = req.body || {};
+    const { user_token } = req.body || {};
     if (!user_token) throw bad('Thiếu user_token');
-    if (config.appId && config.appSecret) {
-      try {
-        const ll = await graph.longLivedUserToken(user_token);
-        if (ll?.access_token) user_token = ll.access_token;
-      } catch (e) {
-        store.logActivity('token-exchange-failed', null, describeError(e));
-      }
-    }
-    const pages = await graph.myPages(user_token);
-    const added = [];
-    for (const p of pages) {
-      if (!p.access_token) continue;
-      store.upsertPage(p);
-      try {
-        await graph.subscribeApp(p.id, p.access_token);
-        store.setPageMeta(p.id, { subscribed: 1 });
-      } catch (e) {
-        store.logActivity('subscribe-failed', p.id, describeError(e));
-      }
-      added.push(store.publicPage(store.getPage(p.id)));
-      syncPage(store.getPage(p.id), { deep: true }).catch(() => {});
-    }
-    store.logActivity('pages-imported', null, `${added.length} trang`);
-    res.json({ count: added.length, pages: added });
+    res.json(await importPagesFromUserToken(String(user_token).trim()));
   }),
 );
 

@@ -3,6 +3,7 @@
 // Server này gọi REST API của Fanpage Manager đang chạy (FANPAGE_URL), nên mọi thao tác
 // đi qua cùng một luồng với giao diện web (ghi CSDL, phát sự kiện thời gian thực, gọi Graph API).
 import fs from 'node:fs';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -21,22 +22,82 @@ if (fs.existsSync(envPath)) {
 
 const BASE = (process.env.FANPAGE_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, '');
 const PASSWORD = process.env.FANPAGE_PASSWORD || process.env.ADMIN_PASSWORD || '';
+// Tự khởi động Fanpage Manager khi chưa chạy (chỉ với địa chỉ localhost). FANPAGE_AUTOSTART=0 để tắt.
+const AUTOSTART = process.env.FANPAGE_AUTOSTART !== '0';
 
-async function api(p, { method = 'GET', body, query } = {}) {
+const isLocalBase = () => {
+  try {
+    return ['localhost', '127.0.0.1', '[::1]'].includes(new URL(BASE).hostname);
+  } catch {
+    return false;
+  }
+};
+
+let starting = null;
+/** Chạy server/index.js ở nền (tách khỏi MCP, ghi log vào data/server.log) rồi chờ sẵn sàng. */
+function autostartServer() {
+  if (starting) return starting;
+  starting = (async () => {
+    const port = new URL(BASE).port || '80';
+    const logDir = path.join(root, 'data');
+    fs.mkdirSync(logDir, { recursive: true });
+    const log = fs.openSync(path.join(logDir, 'server.log'), 'a');
+    const args = [path.join(root, 'server', 'index.js')];
+    if (process.env.FANPAGE_DEMO === '1') args.push('--demo');
+    const child = spawn(process.execPath, args, {
+      cwd: root,
+      env: { ...process.env, PORT: port },
+      detached: true,
+      stdio: ['ignore', log, log],
+      windowsHide: true,
+    });
+    child.unref();
+    console.error(`[fanpage-mcp] Đã tự khởi động Fanpage Manager (pid ${child.pid}) tại ${BASE}, log: data/server.log`);
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      try {
+        const r = await fetch(BASE + '/api/me', { headers: PASSWORD ? { authorization: `Bearer ${PASSWORD}` } : {} });
+        if (r.status < 500) return true;
+      } catch {
+        /* chưa sẵn sàng */
+      }
+    }
+    throw new Error('Fanpage Manager không khởi động được, xem data/server.log');
+  })().finally(() => {
+    setTimeout(() => (starting = null), 5000);
+  });
+  return starting;
+}
+
+async function api(p, opts = {}) {
+  try {
+    return await apiOnce(p, opts);
+  } catch (e) {
+    if (e.code === 'NOT_RUNNING' && AUTOSTART && isLocalBase()) {
+      await autostartServer();
+      return apiOnce(p, opts);
+    }
+    throw e;
+  }
+}
+
+async function apiOnce(p, { method = 'GET', body, query } = {}) {
   const url = new URL(BASE + '/api' + p);
   for (const [k, v] of Object.entries(query || {})) {
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }
-  const headers = {};
+  const headers = { 'x-fanpage-client': 'mcp' };
   if (body !== undefined) headers['content-type'] = 'application/json';
   if (PASSWORD) headers.authorization = `Bearer ${PASSWORD}`;
   let res;
   try {
     res = await fetch(url, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
   } catch (e) {
-    throw new Error(
+    const err = new Error(
       `Không kết nối được Fanpage Manager tại ${BASE} (${e.cause?.code || e.message}). Hãy chạy "npm start" (hoặc "npm run demo") trước, hoặc đặt FANPAGE_URL.`,
     );
+    if (['ECONNREFUSED', 'ECONNRESET'].includes(e.cause?.code)) err.code = 'NOT_RUNNING';
+    throw err;
   }
   const text = await res.text();
   let data;
@@ -101,7 +162,8 @@ Quy trình gợi ý: fanpage_overview -> list_conversations(status="open") -> ge
 - send_message gửi THẬT tới khách hàng trên Messenger, reply_comment đăng THẬT công khai trên Facebook. Hãy soạn câu trả lời và xin xác nhận của người dùng trước khi gửi, trừ khi họ đã yêu cầu rõ ràng là cứ gửi.
 - Facebook chỉ cho gửi tin thường trong 24 giờ kể từ tin cuối của khách (can_reply). Ngoài cửa sổ này cần message tag hợp lệ; nếu không, dùng add_note để ghi chú nội bộ.
 - Biến {name} (tên khách) và {page} (tên trang) được thay tự động trong nội dung gửi.
-- Trả lời bằng ngôn ngữ của khách (thường là tiếng Việt), lịch sự, ngắn gọn.`,
+- Trả lời bằng ngôn ngữ của khách (thường là tiếng Việt), lịch sự, ngắn gọn.
+- Nếu chưa có trang nào (list_pages trống), hướng dẫn người dùng mở ${BASE}/#/connect để đăng nhập Facebook và chọn fanpage. Dùng connection_status để xem tình trạng kết nối.`,
   },
 );
 
@@ -128,6 +190,28 @@ server.registerTool(
       ...pages.map((p) => `- ${p.name} [${p.id}]${p.enabled ? '' : ' (đã tắt)'}${p.last_error ? ` LỖI: ${p.last_error}` : ''} · đồng bộ: ${vnTime(p.last_sync)}`),
     ].join('\n');
     return ok(text, { stats: s, pages });
+  }),
+);
+
+server.registerTool(
+  'connection_status',
+  {
+    title: 'Tình trạng kết nối',
+    description: 'Kiểm tra kết nối Facebook: đã cấu hình App chưa, số trang đã kết nối, URL webhook, lần cuối nhận webhook. Dùng khi chưa có trang hoặc gửi tin bị lỗi.',
+    inputSchema: {},
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tool(async () => {
+    const c = await api('/connect');
+    const lines = [
+      `Fanpage Manager: ${BASE}${c.demo ? ' (CHẾ ĐỘ DEMO, dữ liệu giả)' : ''}`,
+      `App Facebook: ${c.has_app_id ? `App ID ${c.app_id}` : 'CHƯA nhập App ID'} · App Secret: ${c.has_app_secret ? 'đã có' : 'CHƯA có'}`,
+      `Trang đã kết nối: ${c.pages}`,
+      `Đăng nhập Facebook: mở ${BASE}/#/connect và bấm "Đăng nhập với Facebook"`,
+      `Redirect URI cần khai báo trong app Facebook: ${c.oauth_redirect_uri}`,
+      `Webhook: ${c.webhook_url}${c.base_is_https ? '' : ' (Facebook cần HTTPS công khai, hãy đặt URL công khai)'} · lần cuối nhận: ${c.last_webhook_at ? vnTime(c.last_webhook_at) : 'chưa bao giờ'}`,
+    ];
+    return ok(lines.join('\n'), c);
   }),
 );
 

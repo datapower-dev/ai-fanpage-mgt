@@ -15,7 +15,8 @@ Bộ công cụ tự cài để theo dõi và quản lý fanpage Facebook: hộp
 | Bình luận | Danh sách bình luận chưa trả lời, trả lời công khai, gửi kèm tin nhắn riêng (private reply), ẩn/hiện, xoá |
 | Tự động hoá | Luật trả lời theo từ khoá cho tin nhắn và bình luận, câu trả lời nhanh gõ bằng `/`, trả lời ngoài giờ làm việc |
 | Thời gian thực | Cập nhật tức thì qua Server-Sent Events, âm báo và thông báo trình duyệt |
-| Claude (MCP) | 23 công cụ để Claude xem, trả lời, gắn nhãn, xử lý bình luận, tạo luật tự động, và 2 prompt mẫu |
+| Kết nối | Màn hình hướng dẫn 4 bước: nhập App Facebook, **Đăng nhập với Facebook** để chọn fanpage, webhook, cấu hình Claude |
+| Claude (MCP) | 24 công cụ để Claude xem, trả lời, gắn nhãn, xử lý bình luận, tạo luật tự động, 2 prompt mẫu, lệnh tắt cho Claude Code |
 
 ## Chạy thử ngay (không cần Facebook)
 
@@ -33,38 +34,44 @@ Mở http://localhost:3000. Chế độ demo tạo hai trang mẫu cùng hội t
 
 ## Kết nối fanpage thật
 
-### 1. Tạo ứng dụng Facebook
-
-1. Vào https://developers.facebook.com/apps, tạo app loại **Business**.
-2. Thêm sản phẩm **Messenger** (và **Webhooks** nếu chưa có).
-3. Ghi lại **App ID** và **App Secret** ở mục Settings → Basic.
-
-### 2. Cấu hình `.env`
-
-```bash
-cp .env.example .env
-```
-
-Điền `FB_APP_ID`, `FB_APP_SECRET`, đổi `FB_VERIFY_TOKEN` thành một chuỗi bí mật, và đặt `ADMIN_PASSWORD` nếu server mở ra Internet.
-
-### 3. Chạy server
+Chạy server ở chế độ thật rồi mở http://localhost:3000. Lần đầu chưa có fanpage, ứng dụng tự mở màn hình **Kết nối**. Màn hình này hướng dẫn từng bước và có nút sao chép cho mọi địa chỉ cần khai báo.
 
 ```bash
 npm start
 ```
 
-### 4. Lấy token và thêm trang
+### 1. Tạo ứng dụng Facebook
 
-1. Mở Graph API Explorer (developers.facebook.com/tools/explorer), chọn app vừa tạo.
-2. Tạo User Token với các quyền: `pages_show_list`, `pages_messaging`, `pages_manage_metadata`, `pages_read_engagement`, `pages_manage_engagement`, `pages_read_user_content`.
-3. Trong giao diện, vào **Trang**. Dán User Token vào ô "Nhập tất cả trang từ User Token", hoặc dán Page Access Token của từng trang.
-4. Hệ thống tự đăng ký webhook cho trang và đồng bộ lịch sử tin nhắn, bài viết, bình luận.
+1. Vào https://developers.facebook.com/apps, tạo app loại **Business**, chọn trường hợp sử dụng quản lý Trang và nhắn tin Messenger.
+2. Thêm sản phẩm **Facebook Login for Business** (hoặc Facebook Login) và **Messenger**.
+3. Ở Facebook Login → Settings → **Valid OAuth Redirect URIs**, thêm `http://localhost:3000/auth/facebook/callback`. Màn hình Kết nối hiển thị đúng địa chỉ này để sao chép.
+4. Sao chép **App ID** và **App Secret** ở Settings → Basic vào bước 1 của màn hình Kết nối, rồi bấm "Lưu cấu hình". Bạn cũng có thể đặt `FB_APP_ID`, `FB_APP_SECRET` trong file `.env`.
 
-Khi đã đặt `FB_APP_ID` và `FB_APP_SECRET`, User Token được đổi sang loại dài hạn. Page Token lấy từ token dài hạn sẽ không hết hạn.
+### 2. Đăng nhập với Facebook
+
+Bấm **Đăng nhập với Facebook** ở bước 2. Facebook hỏi bạn chọn fanpage và cấp quyền. Sau khi quay lại, hệ thống:
+
+- đổi token sang loại dài hạn, nên Page Token không hết hạn;
+- đăng ký webhook cho từng trang;
+- đồng bộ lịch sử tin nhắn, bài viết và bình luận.
+
+Cách khác: mở mục "Cách khác: dán access token thủ công" để dán User Token hoặc Page Token lấy từ Graph API Explorer.
+
+### 3. Cấu hình `.env` (không bắt buộc)
+
+```bash
+cp .env.example .env
+```
+
+Nên đặt `ADMIN_PASSWORD` nếu server mở ra Internet. Mọi cấu hình App nhập trong giao diện được lưu trong CSDL trên máy và được ưu tiên hơn `.env`.
+
+### 4. Quyền được xin khi đăng nhập
+
+`pages_show_list`, `pages_messaging`, `pages_manage_metadata`, `pages_read_engagement`, `pages_manage_engagement`, `pages_read_user_content`.
 
 ### 5. Cấu hình webhook (để nhận tin tức thì)
 
-Facebook chỉ gửi webhook tới URL công khai HTTPS. Trên máy cá nhân, tạo đường hầm bằng Cloudflare Tunnel hoặc ngrok:
+Facebook chỉ gửi webhook tới URL công khai HTTPS. Trên máy cá nhân, tạo đường hầm bằng Cloudflare Tunnel hoặc ngrok, rồi nhập URL nhận được vào ô "URL công khai" ở bước 1 của màn hình Kết nối:
 
 ```bash
 cloudflared tunnel --url http://localhost:3000
@@ -86,11 +93,18 @@ Không có webhook thì hệ thống vẫn chạy nhờ đồng bộ định k�
 
 ## Kết nối Claude qua MCP
 
-MCP server (`mcp/server.js`) gọi REST API của Fanpage Manager. Vì vậy server chính phải đang chạy (`npm start` hoặc `npm run demo`).
+MCP server (`mcp/server.js`) gọi REST API của Fanpage Manager. Nếu server chưa chạy trên máy, MCP **tự khởi động** nó ở nền (log ghi vào `data/server.log`). Đặt `FANPAGE_AUTOSTART=0` để tắt, hoặc `FANPAGE_DEMO=1` để tự khởi động ở chế độ demo.
+
+Bước 4 của màn hình Kết nối hiển thị sẵn lệnh và cấu hình với đường dẫn đúng của máy bạn, kèm nút sao chép.
 
 ### Claude Code
 
-File `.mcp.json` ở thư mục gốc đã cấu hình sẵn. Mở Claude Code trong thư mục này và chấp nhận MCP server `fanpage-manager` khi được hỏi. Hoặc thêm thủ công:
+File `.mcp.json` ở thư mục gốc đã cấu hình sẵn. Mở Claude Code trong thư mục dự án và chấp nhận MCP server `fanpage-manager` khi được hỏi. File `CLAUDE.md` giúp Claude hiểu dự án, và có sẵn hai lệnh tắt:
+
+- `/tra-loi-khach`: soạn câu trả lời cho tin nhắn và bình luận đang chờ, chờ bạn duyệt rồi mới gửi.
+- `/bao-cao-fanpage`: báo cáo tình hình chăm sóc khách hàng.
+
+Để dùng MCP ở mọi thư mục, thêm bằng lệnh (đổi đường dẫn theo nơi bạn đặt dự án):
 
 ```bash
 claude mcp add fanpage-manager -e FANPAGE_URL=http://localhost:3000 -- node C:/Claude/facebook/mcp/server.js
@@ -118,7 +132,7 @@ Thêm vào `%APPDATA%\Claude\claude_desktop_config.json`:
 
 | Nhóm | Công cụ |
 |---|---|
-| Xem | `fanpage_overview`, `list_pages`, `list_conversations`, `get_conversation`, `search_messages`, `list_comments`, `list_posts`, `list_quick_replies`, `list_auto_rules`, `recent_activity` |
+| Xem | `connection_status`, `fanpage_overview`, `list_pages`, `list_conversations`, `get_conversation`, `search_messages`, `list_comments`, `list_posts`, `list_quick_replies`, `list_auto_rules`, `recent_activity` |
 | Tin nhắn | `send_message`, `add_note`, `update_conversation`, `mark_read` |
 | Bình luận | `reply_comment`, `hide_comment`, `mark_comment_handled`, `delete_comment` |
 | Quản trị | `sync_page`, `create_auto_rule`, `update_auto_rule`, `delete_auto_rule`, `create_quick_reply` |
@@ -140,6 +154,7 @@ server/
   index.js      Khởi động Express, webhook, xác thực, file tĩnh
   config.js     Đọc .env
   db.js         Lược đồ SQLite
+  facebook.js   Cấu hình App, đăng nhập Facebook (OAuth), nhập fanpage
   graph.js      Gọi Facebook Graph API, diễn giải lỗi sang tiếng Việt
   webhook.js    Xác minh và xử lý sự kiện webhook (tin nhắn, bình luận)
   sync.js       Đồng bộ định kỳ từ Graph API
@@ -150,7 +165,9 @@ server/
   events.js     Server-Sent Events
   demo.js       Dữ liệu demo và giả lập
 public/         Giao diện web (HTML/CSS/JS thuần, không cần build)
-mcp/server.js   MCP server cho Claude
+mcp/server.js   MCP server cho Claude (tự khởi động server nếu cần)
+.claude/        Lệnh tắt cho Claude Code và cấu hình xem trước
+CLAUDE.md       Hướng dẫn dự án cho Claude Code
 docs/           Ghi chú nghiên cứu Chatwoot
 ```
 
@@ -162,4 +179,5 @@ Chatwoot là nền tảng CSKH đa kênh mạnh hơn nhiều, nhưng cần Postg
 
 - Đặt `ADMIN_PASSWORD` khi server truy cập được từ Internet. Giao diện dùng Basic Auth, MCP dùng Bearer token cùng mật khẩu.
 - Đặt `FB_APP_SECRET` để kiểm tra chữ ký `X-Hub-Signature-256` của webhook.
-- Access token lưu dạng thuần trong `data/fanpage.db`. Giữ file này an toàn và không đưa lên git (đã có trong `.gitignore`).
+- Access token và App Secret nhập từ giao diện được lưu dạng thuần trong `data/fanpage.db`. App Secret không bao giờ được gửi ngược lại trình duyệt.
+- Đăng nhập Facebook dùng mã `state` ngẫu nhiên, dùng một lần, để chống giả mạo yêu cầu. Giữ file này an toàn và không đưa lên git (đã có trong `.gitignore`).
