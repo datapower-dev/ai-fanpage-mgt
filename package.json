@@ -1,0 +1,20 @@
+{
+  "name": "fanpage-manager",
+  "version": "0.1.0",
+  "description": "Bộ công cụ theo dõi và quản lý fanpage Facebook: hộp thư Messenger, bình luận, trả lời tự động.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "demo": "node server/index.js --demo"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "express": "^4.21.2",
+    "zod": "^4.6.7"
+  }
+}

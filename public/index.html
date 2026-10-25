@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fanpage Manager</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232a78d6'/><path d='M8 10h16v10H14l-4 4v-4H8z' fill='white'/></svg>" />
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" width="28" height="28"><rect width="32" height="32" rx="8" fill="var(--accent)"/><path d="M8 10h16v10H14l-4 4v-4H8z" fill="#fff"/></svg>
+        </span>
+        <div>
+          <div class="brand-name">Fanpage Manager</div>
+          <div class="brand-sub" id="live"><span class="dot"></span><span>Đang kết nối…</span></div>
+        </div>
+      </div>
+
+      <label class="field compact">
+        <span class="field-label">Trang</span>
+        <select id="pageFilter"><option value="">Tất cả trang</option></select>
+      </label>
+
+      <nav class="nav" id="nav">
+        <a href="#/dashboard" data-view="dashboard"><span class="ico">◧</span>Tổng quan</a>
+        <a href="#/inbox" data-view="inbox"><span class="ico">✉</span>Hộp thư <span class="badge" id="badgeInbox" hidden></span></a>
+        <a href="#/comments" data-view="comments"><span class="ico">💬</span>Bình luận <span class="badge" id="badgeComments" hidden></span></a>
+        <a href="#/pages" data-view="pages"><span class="ico">⚑</span>Trang</a>
+        <a href="#/automation" data-view="automation"><span class="ico">⚡</span>Tự động hoá</a>
+        <a href="#/activity" data-view="activity"><span class="ico">☰</span>Nhật ký</a>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div id="demoBox" class="demo-box" hidden>
+          <div class="demo-title">Chế độ demo</div>
+          <button class="btn sm" id="simMsg">Giả lập tin nhắn</button>
+          <button class="btn sm" id="simCmt">Giả lập bình luận</button>
+        </div>
+        <button class="btn ghost sm" id="themeToggle" title="Đổi giao diện sáng/tối">◐ Giao diện</button>
+        <button class="btn ghost sm" id="notifyToggle" title="Bật thông báo trên trình duyệt">🔔 Thông báo</button>
+      </div>
+    </aside>
+
+    <main class="main" id="main"></main>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "fanpage-manager": {
+      "command": "node",
+      "args": ["C:/Claude/facebook/mcp/server.js"],
+      "env": {
+        "FANPAGE_URL": "http://localhost:3000"
+      }
+    }
+  }
+}

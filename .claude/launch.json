@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "fanpage-demo",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server/index.js", "--demo"],
+      "env": { "PORT": "3123" },
+      "port": 3123
+    }
+  ]
+}
