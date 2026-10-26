@@ -157,13 +157,14 @@ const server = new McpServer(
   { name: 'fanpage-manager', version: '0.1.0' },
   {
     instructions: `Công cụ quản lý fanpage Facebook (hộp thư Messenger + bình luận) của người dùng.
-Quy trình gợi ý: fanpage_overview -> list_conversations(status="open") -> get_conversation -> send_message.
+Quy trình gợi ý: fanpage_overview -> list_conversations(status="open") -> get_conversation -> send_message. Bài viết: list_posts -> get_post; đăng bài: create_post.
 - ID hội thoại có dạng "<page_id>:<psid>".
 - send_message gửi THẬT tới khách hàng trên Messenger, reply_comment đăng THẬT công khai trên Facebook. Hãy soạn câu trả lời và xin xác nhận của người dùng trước khi gửi, trừ khi họ đã yêu cầu rõ ràng là cứ gửi.
 - Facebook chỉ cho gửi tin thường trong 24 giờ kể từ tin cuối của khách (can_reply). Ngoài cửa sổ này cần message tag hợp lệ; nếu không, dùng add_note để ghi chú nội bộ.
 - Biến {name} (tên khách) và {page} (tên trang) được thay tự động trong nội dung gửi.
 - Trả lời bằng ngôn ngữ của khách (thường là tiếng Việt), lịch sự, ngắn gọn.
-- Nếu chưa có trang nào (list_pages trống), hướng dẫn người dùng mở ${BASE}/#/connect để đăng nhập Facebook và chọn fanpage. Dùng connection_status để xem tình trạng kết nối.`,
+- Nếu chưa có trang nào, gọi facebook_login để lấy link đăng nhập cho người dùng (Claude không đăng nhập thay được). Người dùng đưa App ID/Secret hoặc token thì dùng configure_facebook_app / connect_pages_with_token.
+- create_post đăng bài CÔNG KHAI: luôn cho người dùng xem bản cuối và xin xác nhận trước khi đăng.`,
   },
 );
 
@@ -313,22 +314,197 @@ server.registerTool(
   }),
 );
 
+const postLine = (p) => {
+  const status = p.status === 'scheduled' ? `HẸN ĐĂNG ${vnTime(p.scheduled_time)}` : vnTime(p.created_time);
+  return `[${p.id}] ${status} (${p.page_name}) 👍${p.likes} 💬${p.comments_count} ↗${p.shares} · chờ xử lý: ${p.pending_comments ?? 0}${p.source === 'mcp' ? ' · đăng bởi Claude' : ''}\n    "${(p.message || '').slice(0, 160)}"${p.permalink_url ? `\n    ${p.permalink_url}` : ''}`;
+};
+
 server.registerTool(
   'list_posts',
   {
     title: 'Danh sách bài viết',
-    description: 'Liệt kê bài viết gần đây với số thích, bình luận, chia sẻ và số bình luận chờ xử lý.',
+    description: 'Liệt kê bài viết gần đây (kể cả bài hẹn giờ) với số cảm xúc, bình luận, chia sẻ và số bình luận chờ xử lý.',
     inputSchema: { page_id: z.string().optional(), limit: z.number().int().min(1).max(100).default(15) },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   tool(async ({ page_id, limit = 15 }) => {
     const rows = await api('/posts', { query: { page_id, limit } });
+    return ok(rows.map(postLine).join('\n') || 'Chưa có bài viết.', { posts: rows });
+  }),
+);
+
+server.registerTool(
+  'get_post',
+  {
+    title: 'Đọc bài viết',
+    description: 'Đọc toàn bộ nội dung một bài viết kèm tất cả bình luận và phản hồi của trang. refresh=true để lấy số liệu và bình luận mới nhất từ Facebook.',
+    inputSchema: {
+      post_id: z.string().describe('ID bài viết, dạng "<page_id>_<post_id>"'),
+      refresh: z.boolean().default(false),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
+  tool(async ({ post_id, refresh = false }) => {
+    const d = await api(`/posts/${encodeURIComponent(post_id)}`, { query: { refresh: refresh ? 1 : 0 } });
+    const p = d.post;
+    const lines = [
+      `Bài [${p.id}] trên ${p.page_name} · ${p.status === 'scheduled' ? `hẹn đăng ${vnTime(p.scheduled_time)}` : `đăng ${vnTime(p.created_time)}`}`,
+      `👍 ${p.likes} · 💬 ${p.comments_count} · ↗ ${p.shares}${p.permalink_url ? ` · ${p.permalink_url}` : ''}${p.picture ? `\nẢnh: ${p.picture}` : ''}`,
+      d.refresh_error ? `(Không làm mới được từ Facebook: ${d.refresh_error})` : d.refreshed ? '(Đã làm mới từ Facebook)' : '',
+      '--- Nội dung ---',
+      p.message || '(không có chữ)',
+      `--- ${d.comments.length} bình luận ---`,
+      ...d.comments.map(
+        (c) =>
+          `${c.parent_id ? '    ↳ ' : ''}[${c.id}] ${c.is_page ? 'TRANG' : c.from_name || 'Người dùng'} (${vnTime(c.created_time)}${c.is_hidden ? ', đang ẩn' : ''}${!c.is_page && !c.replied ? ', chưa trả lời' : ''}): ${c.message}`,
+      ),
+    ].filter(Boolean);
+    return ok(lines.join('\n'), d);
+  }),
+);
+
+server.registerTool(
+  'create_post',
+  {
+    title: 'Đăng bài lên fanpage',
+    description:
+      'Đăng bài CÔNG KHAI lên fanpage: chữ, kèm link HOẶC ảnh (URL công khai), có thể hẹn giờ (10 phút đến 75 ngày). Luôn cho người dùng xem nội dung cuối cùng và xin xác nhận trước khi gọi.',
+    inputSchema: {
+      page_id: z.string(),
+      message: z.string().max(60000).default('').describe('Nội dung bài'),
+      link: z.string().url().optional().describe('Link chia sẻ kèm bài (không dùng cùng image_url)'),
+      image_url: z.string().url().optional().describe('URL ảnh công khai (jpg/png) để đăng bài ảnh'),
+      scheduled_at: z.string().optional().describe('Thời điểm hẹn đăng, ISO 8601 có múi giờ, ví dụ 2026-11-01T09:00:00+07:00'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  tool(async ({ page_id, message = '', link, image_url, scheduled_at }) => {
+    const r = await api(`/pages/${encodeURIComponent(page_id)}/posts`, {
+      method: 'POST',
+      body: { message, link, image_url, scheduled_at, source: 'mcp' },
+    });
+    const p = r.post;
     return ok(
-      rows
-        .map((p) => `[${p.id}] ${vnTime(p.created_time)} (${p.page_name}) 👍${p.likes} 💬${p.comments_count} ↗${p.shares} · chờ xử lý: ${p.pending_comments}\n    "${(p.message || '').slice(0, 140)}"${p.permalink_url ? `\n    ${p.permalink_url}` : ''}`)
-        .join('\n') || 'Chưa có bài viết.',
-      { posts: rows },
+      `${p.status === 'scheduled' ? `Đã hẹn đăng lúc ${vnTime(p.scheduled_time)}` : 'Đã đăng bài'} lên ${p.page_name}.\nID: ${p.id}${p.permalink_url ? `\nLink: ${p.permalink_url}` : ''}`,
+      { post: p },
     );
+  }),
+);
+
+server.registerTool(
+  'delete_post',
+  {
+    title: 'Xoá bài viết',
+    description: 'XOÁ VĨNH VIỄN một bài viết (hoặc huỷ bài hẹn giờ) trên fanpage. Không thể hoàn tác. Chỉ dùng khi người dùng yêu cầu rõ ràng.',
+    inputSchema: { post_id: z.string() },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  },
+  tool(async ({ post_id }) => {
+    await api(`/posts/${encodeURIComponent(post_id)}`, { method: 'DELETE' });
+    return ok(`Đã xoá bài ${post_id}.`);
+  }),
+);
+
+/* ---------- Đăng nhập / kết nối page ---------- */
+server.registerTool(
+  'facebook_login',
+  {
+    title: 'Đăng nhập Facebook để kết nối page',
+    description:
+      'Trả về đường link để người dùng tự đăng nhập Facebook và chọn fanpage cấp quyền (Claude không đăng nhập thay được). Kèm danh sách việc còn thiếu (App ID/Secret, Redirect URI) nếu chưa sẵn sàng.',
+    inputSchema: {},
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tool(async () => {
+    const c = await api('/connect');
+    if (c.demo) return ok(`Fanpage Manager đang chạy CHẾ ĐỘ DEMO nên không kết nối Facebook thật được. Dừng server và chạy "npm start", rồi gọi lại công cụ này.`, c);
+    const todo = [];
+    if (!c.has_app_id || !c.has_app_secret) {
+      todo.push(
+        'Tạo app tại https://developers.facebook.com/apps (loại Business, thêm Facebook Login for Business và Messenger), rồi cung cấp App ID và App Secret (dùng configure_facebook_app hoặc nhập ở màn hình Kết nối).',
+      );
+    }
+    todo.push(`Trong app Facebook → Facebook Login → Settings → Valid OAuth Redirect URIs, thêm: ${c.oauth_redirect_uri}`);
+    const lines = [
+      `Đã kết nối: ${c.pages} trang.`,
+      c.has_app_id && c.has_app_secret
+        ? `Mở link sau trong trình duyệt, đăng nhập Facebook và chọn các fanpage cần quản lý:\n${c.base_url}/auth/facebook/start`
+        : 'Chưa thể đăng nhập vì thiếu cấu hình App.',
+      `Hoặc mở màn hình Kết nối: ${c.base_url}/#/connect`,
+      '',
+      'Việc cần làm:',
+      ...todo.map((t, i) => `${i + 1}. ${t}`),
+      '',
+      `Quyền sẽ xin: ${c.scopes.join(', ')}`,
+      'Sau khi người dùng đăng nhập xong, gọi list_pages để xác nhận.',
+    ];
+    return ok(lines.join('\n'), { ...c, login_url: `${c.base_url}/auth/facebook/start`, connect_url: `${c.base_url}/#/connect` });
+  }),
+);
+
+server.registerTool(
+  'configure_facebook_app',
+  {
+    title: 'Cấu hình ứng dụng Facebook',
+    description:
+      'Lưu App ID, App Secret, Verify Token webhook và URL công khai vào Fanpage Manager (lưu trên máy người dùng). Chỉ dùng giá trị người dùng cung cấp. Bỏ trống trường nào thì giữ giá trị cũ.',
+    inputSchema: {
+      app_id: z.string().optional(),
+      app_secret: z.string().optional(),
+      verify_token: z.string().optional(),
+      public_url: z.string().optional().describe('URL HTTPS công khai của server, ví dụ từ cloudflared'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  tool(async ({ app_id, app_secret, verify_token, public_url }) => {
+    const c = await api('/connect/app', {
+      method: 'PUT',
+      body: { appId: app_id, appSecret: app_secret, verifyToken: verify_token, publicUrl: public_url },
+    });
+    return ok(
+      `Đã lưu. App ID: ${c.app_id || '—'} · App Secret: ${c.has_app_secret ? 'đã có' : 'chưa có'}\nRedirect URI cần khai báo: ${c.oauth_redirect_uri}\nWebhook: ${c.webhook_url}`,
+      c,
+    );
+  }),
+);
+
+server.registerTool(
+  'connect_pages_with_token',
+  {
+    title: 'Kết nối page bằng access token',
+    description:
+      'Kết nối fanpage bằng token người dùng đưa (lấy từ Graph API Explorer). user_token: nhập mọi trang người đó quản lý. page_token: kết nối một trang. Hệ thống tự đăng ký webhook và đồng bộ dữ liệu.',
+    inputSchema: {
+      user_token: z.string().optional(),
+      page_token: z.string().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  tool(async ({ user_token, page_token }) => {
+    if (!user_token && !page_token) throw new Error('Cần user_token hoặc page_token');
+    if (user_token) {
+      const r = await api('/pages/import', { method: 'POST', body: { user_token } });
+      return ok(
+        `Đã kết nối ${r.count} trang${r.long_lived ? ' (token dài hạn)' : ''}: ${r.pages.map((p) => p.name).join(', ') || '—'}${r.warnings?.length ? `\nCảnh báo: ${r.warnings.join(' | ')}` : ''}\nĐang đồng bộ dữ liệu ở nền.`,
+        r,
+      );
+    }
+    const p = await api('/pages', { method: 'POST', body: { access_token: page_token } });
+    return ok(`Đã kết nối trang ${p.name} [${p.id}]${p.subscribed === false ? ' (chưa đăng ký được webhook)' : ''}. Đang đồng bộ dữ liệu ở nền.`, { page: p });
+  }),
+);
+
+server.registerTool(
+  'subscribe_page_webhook',
+  {
+    title: 'Đăng ký webhook cho page',
+    description: 'Đăng ký ứng dụng nhận sự kiện (tin nhắn, bình luận) của một trang. Dùng khi trang báo "chưa đăng ký webhook".',
+    inputSchema: { page_id: z.string() },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  tool(async ({ page_id }) => {
+    await api(`/pages/${encodeURIComponent(page_id)}/subscribe`, { method: 'POST' });
+    return ok('Đã đăng ký webhook cho trang.');
   }),
 );
 

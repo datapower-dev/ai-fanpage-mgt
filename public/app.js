@@ -103,7 +103,7 @@ const avatar = (name, pic, cls = '') =>
 const STATUS_LABEL = { open: 'Cần trả lời', replied: 'Đã trả lời', done: 'Đã xong' };
 
 /* ---------------- Router ---------------- */
-const views = { connect: renderConnect, dashboard: renderDashboard, inbox: renderInbox, comments: renderComments, pages: renderPages, automation: renderAutomation, activity: renderActivity };
+const views = { connect: renderConnect, dashboard: renderDashboard, inbox: renderInbox, comments: renderComments, posts: renderPosts, pages: renderPages, automation: renderAutomation, activity: renderActivity };
 
 function route() {
   const [path, qs = ''] = location.hash.split('?');
@@ -942,6 +942,152 @@ async function renderConnect(query = new URLSearchParams()) {
       renderConnect();
     } catch (err) {
       fail(err);
+    }
+  };
+}
+
+/* ================= POSTS ================= */
+function toLocalInput(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+async function renderPosts(query = new URLSearchParams()) {
+  const pages = state.pages.filter((p) => p.enabled);
+  const defPage = state.pageFilter || pages[0]?.id || '';
+  const minSchedule = toLocalInput(new Date(Date.now() + 11 * 60e3));
+  $('#main').innerHTML = `<div class="view">
+    <div class="view-head"><h1>Bài viết</h1></div>
+    <div class="cards">
+      <div class="card">
+        <h2>Đăng bài mới</h2>
+        ${
+          pages.length
+            ? `<form id="postForm" class="grid2">
+          <label class="field"><span class="field-label">Trang</span><select name="page_id">${pages.map((p) => `<option value="${esc(p.id)}" ${p.id === defPage ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
+          <label class="field"><span class="field-label">Hẹn giờ đăng (để trống = đăng ngay)</span><input type="datetime-local" name="scheduled_at" min="${minSchedule}"></label>
+          <label class="field" style="grid-column:1/-1"><span class="field-label">Nội dung</span><textarea name="message" rows="5" placeholder="Viết nội dung bài đăng…"></textarea></label>
+          <label class="field"><span class="field-label">Link đính kèm (không bắt buộc)</span><input type="url" name="link" placeholder="https://…"></label>
+          <label class="field"><span class="field-label">Hoặc URL ảnh công khai</span><input type="url" name="image_url" placeholder="https://…/anh.jpg"></label>
+          <div class="muted small">Bài đăng hiển thị công khai trên fanpage. Hẹn giờ từ 10 phút đến 75 ngày.</div>
+          <div class="row" style="justify-content:flex-end"><button class="btn primary" id="postBtn">Đăng bài</button></div>
+        </form>`
+            : `<div class="empty">Chưa có trang nào. <a href="#/connect">Kết nối fanpage</a> trước.</div>`
+        }
+      </div>
+      <div class="post-layout">
+        <div class="card" style="padding:0"><div id="postList"><div class="empty">Đang tải…</div></div></div>
+        <div class="card" id="postDetail"><div class="empty">Chọn một bài để xem nội dung và bình luận</div></div>
+      </div>
+    </div></div>`;
+
+  const form = $('#postForm');
+  if (form) {
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const f = Object.fromEntries(new FormData(form));
+      const body = {
+        message: f.message,
+        link: f.link || undefined,
+        image_url: f.image_url || undefined,
+        scheduled_at: f.scheduled_at ? new Date(f.scheduled_at).toISOString() : undefined,
+      };
+      const page = state.pages.find((p) => p.id === f.page_id);
+      const when = body.scheduled_at ? `hẹn lúc ${new Date(body.scheduled_at).toLocaleString('vi-VN')}` : 'ngay bây giờ';
+      if (!confirm(`Đăng bài công khai lên "${page?.name}" ${when}?`)) return;
+      $('#postBtn').disabled = true;
+      try {
+        const r = await api(`/pages/${encodeURIComponent(f.page_id)}/posts`, { method: 'POST', body });
+        toast(r.post.status === 'scheduled' ? 'Đã hẹn giờ đăng bài' : 'Đã đăng bài', 'ok');
+        form.reset();
+        await loadPostList(r.post.id);
+      } catch (err) {
+        fail(err);
+      } finally {
+        $('#postBtn').disabled = false;
+      }
+    };
+  }
+  await loadPostList(query.get('id'));
+}
+
+async function loadPostList(selectId) {
+  const params = new URLSearchParams({ limit: '50' });
+  if (state.pageFilter) params.set('page_id', state.pageFilter);
+  let rows;
+  try {
+    rows = await api(`/posts?${params}`);
+  } catch (e) {
+    $('#postList').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    return;
+  }
+  const el = $('#postList');
+  if (!el) return;
+  el.innerHTML = rows.length
+    ? rows
+        .map(
+          (p) => `<div class="post-item" data-id="${esc(p.id)}">
+        ${p.picture ? `<img src="${esc(p.picture)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<div class="post-thumb">📝</div>'}
+        <div style="min-width:0">
+          <div class="small muted">${esc(p.page_name)} · ${p.status === 'scheduled' ? `<b class="chip">⏰ hẹn ${esc(new Date(p.scheduled_time).toLocaleString('vi-VN'))}</b>` : timeAgo(p.created_time) + ' trước'}${p.source === 'mcp' ? ' · 🤖 Claude' : ''}</div>
+          <div class="post-text">${esc(p.message || '(không có chữ)')}</div>
+          <div class="small muted">👍 ${num(p.likes)} · 💬 ${num(p.comments_count)} · ↗ ${num(p.shares)}${p.pending_comments ? ` · <span class="err-text">${p.pending_comments} chờ trả lời</span>` : ''}</div>
+        </div></div>`,
+        )
+        .join('')
+    : '<div class="empty">Chưa có bài viết</div>';
+  $$('.post-item', el).forEach((n) => n.addEventListener('click', () => openPost(n.dataset.id)));
+  const target = selectId || rows[0]?.id;
+  if (target) openPost(target);
+}
+
+async function openPost(id, refresh = false) {
+  $$('.post-item').forEach((n) => n.classList.toggle('sel', n.dataset.id === id));
+  const box = $('#postDetail');
+  if (!box) return;
+  let d;
+  try {
+    d = await api(`/posts/${encodeURIComponent(id)}${refresh ? '?refresh=1' : ''}`);
+  } catch (e) {
+    box.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    return;
+  }
+  if (refresh) toast(d.refresh_error ? `Không làm mới được: ${d.refresh_error}` : 'Đã làm mới từ Facebook', d.refresh_error ? 'err' : 'ok');
+  const p = d.post;
+  box.innerHTML = `
+    <div class="row" style="justify-content:space-between">
+      <div class="small muted">${esc(p.page_name)} · ${p.status === 'scheduled' ? `⏰ hẹn đăng ${esc(new Date(p.scheduled_time).toLocaleString('vi-VN'))}` : fmtDT(p.created_time)}</div>
+      <div class="row">
+        <button class="btn sm" id="postRefresh">⟳ Làm mới</button>
+        ${p.permalink_url ? `<a class="btn sm" href="${esc(p.permalink_url)}" target="_blank" rel="noopener noreferrer">Mở trên Facebook</a>` : ''}
+        <button class="btn sm danger" id="postDelete">Xoá bài</button>
+      </div>
+    </div>
+    <div class="post-body">${linkify(p.message || '(không có chữ)')}</div>
+    ${p.picture ? `<img class="post-img" src="${esc(p.picture)}" alt="" referrerpolicy="no-referrer">` : ''}
+    <div class="small muted" style="margin:8px 0">👍 ${num(p.likes)} · 💬 ${num(p.comments_count)} · ↗ ${num(p.shares)}</div>
+    <h3 class="sub-h">Bình luận (${d.comments.length})</h3>
+    ${
+      d.comments.length
+        ? `<ul class="list-plain">${d.comments
+            .map(
+              (c) => `<li style="${c.parent_id ? 'padding-left:24px' : ''}">${avatar(c.from_name, '', 'sm')}<div style="min-width:0;flex:1">
+            <b ${c.is_page ? 'style="color:var(--accent)"' : ''}>${esc(c.is_page ? `${p.page_name} (trang)` : c.from_name || 'Người dùng')}</b>
+            <span class="muted small">· ${timeAgo(c.created_time)}${c.is_hidden ? ' · đang ẩn' : ''}${!c.is_page && !c.replied && !c.is_hidden ? ' · <span class="err-text">chưa trả lời</span>' : ''}</span>
+            <div>${linkify(c.message)}</div></div></li>`,
+            )
+            .join('')}</ul><div class="row" style="margin-top:8px"><a class="btn sm" href="#/comments">Trả lời bình luận →</a></div>`
+        : '<div class="muted small">Chưa có bình luận</div>'
+    }`;
+  $('#postRefresh').onclick = () => openPost(id, true);
+  $('#postDelete').onclick = async () => {
+    if (!confirm('Xoá vĩnh viễn bài này trên Facebook? Không thể hoàn tác.')) return;
+    try {
+      await api(`/posts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      toast('Đã xoá bài', 'ok');
+      loadPostList();
+    } catch (e) {
+      fail(e);
     }
   };
 }

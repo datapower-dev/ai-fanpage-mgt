@@ -7,6 +7,7 @@ import { sendMessage, replyComment, hideComment, deleteComment, markSeen, descri
 import { syncPage } from './sync.js';
 import { simulateIncoming, simulateComment } from './demo.js';
 import { renderTemplate } from './autoreply.js';
+import { createPost, getPostDetail, deletePost } from './posts.js';
 import { connectionStatus, saveAppConfig, clearAppSecret, importPagesFromUserToken } from './facebook.js';
 
 export const api = Router();
@@ -203,6 +204,25 @@ api.patch('/conversations/:id', (req, res) => {
 
 /* ---------- Bài viết & bình luận ---------- */
 api.get('/posts', (req, res) => res.json(store.listPosts(req.query.page_id || null, Number(req.query.limit) || 50)));
+api.post(
+  '/pages/:id/posts',
+  wrap(async (req, res) => {
+    const page = pageOr404(req.params.id);
+    const post = await createPost(page, req.body || {});
+    res.json({ ok: true, post });
+  }),
+);
+api.get(
+  '/posts/:id',
+  wrap(async (req, res) => res.json(await getPostDetail(req.params.id, { refresh: req.query.refresh === '1' }))),
+);
+api.delete(
+  '/posts/:id',
+  wrap(async (req, res) => {
+    await deletePost(req.params.id);
+    res.json({ ok: true });
+  }),
+);
 api.get('/posts/:id/comments', (req, res) => res.json(store.listComments({ postId: req.params.id, limit: 500 })));
 api.get('/comments', (req, res) =>
   res.json(

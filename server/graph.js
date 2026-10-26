@@ -12,7 +12,7 @@ export class GraphError extends Error {
   }
   /** Diễn giải lỗi phổ biến sang tiếng Việt cho người dùng. */
   get hint() {
-    if (this.code === 190) return 'Access token hết hạn hoặc không hợp lệ. Hãy tạo lại Page Access Token.';
+    if (this.code === 190) return 'Access token hết hạn hoặc không hợp lệ. Hãy đăng nhập Facebook lại ở màn hình Kết nối hoặc tạo token mới.';
     if (this.code === 10 && /outside of allowed window/i.test(this.message))
       return 'Đã quá 24 giờ kể từ tin nhắn cuối của khách. Facebook không cho gửi tin thường, cần dùng message tag hợp lệ.';
     if (this.code === 10 || this.code === 200) return 'Ứng dụng/Token thiếu quyền (pages_messaging, pages_manage_metadata, pages_read_engagement...).';
@@ -166,6 +166,37 @@ export const graph = {
       },
       limit,
     );
+  },
+  /** Đăng bài chữ/link lên trang. scheduledUnix: thời điểm hẹn đăng (giây), bỏ trống = đăng ngay. */
+  createFeedPost(pageId, token, { message, link, scheduledUnix } = {}) {
+    const body = { message };
+    if (link) body.link = link;
+    if (scheduledUnix) {
+      body.published = false;
+      body.scheduled_publish_time = scheduledUnix;
+    }
+    return request('POST', `${pageId}/feed`, { token, body });
+  },
+  /** Đăng ảnh (từ URL công khai) kèm chú thích. Trả về { id: photo_id, post_id }. */
+  createPhotoPost(pageId, token, { url, caption, scheduledUnix } = {}) {
+    const body = { url, caption };
+    if (scheduledUnix) {
+      body.published = false;
+      body.scheduled_publish_time = scheduledUnix;
+    }
+    return request('POST', `${pageId}/photos`, { token, body });
+  },
+  getPost(postId, token) {
+    return request('GET', postId, {
+      token,
+      params: {
+        fields:
+          'id,message,story,created_time,permalink_url,full_picture,shares,is_published,scheduled_publish_time,reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)',
+      },
+    });
+  },
+  deletePost(postId, token) {
+    return request('DELETE', postId, { token });
   },
   replyComment(commentId, token, message) {
     return request('POST', `${commentId}/comments`, { token, body: { message } });

@@ -308,6 +308,17 @@ ol.steps { padding-left: 20px; margin: 0; display: grid; gap: 6px; }
 .fb-btn.disabled { opacity: .5; cursor: not-allowed; }
 .sub-h { font-size: 13px; margin: 14px 0 4px; }
 
+/* ---------- Posts ---------- */
+.post-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 16px; align-items: start; }
+.post-item { display: grid; grid-template-columns: 56px 1fr; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.post-item:hover { background: var(--surface-2); }
+.post-item.sel { background: var(--accent-soft); }
+.post-item img, .post-thumb { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; background: var(--surface-3); display: grid; place-items: center; font-size: 22px; }
+.post-text { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; margin: 2px 0; }
+.post-body { white-space: pre-wrap; margin: 12px 0 8px; font-size: 15px; overflow-wrap: anywhere; }
+.post-img { max-width: 100%; border-radius: 10px; display: block; }
+@media (max-width: 1100px) { .post-layout { grid-template-columns: 1fr; } }
+
 /* ---------- Tables ---------- */
 table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tbl th, .tbl td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }

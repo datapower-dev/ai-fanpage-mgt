@@ -13,12 +13,14 @@ Công cụ tự cài để quản lý fanpage Facebook: hộp thư Messenger, b�
 - Server MCP `fanpage-manager` khai báo trong `.mcp.json`, mã ở `mcp/server.js`. Nó gọi REST API của Fanpage Manager và **tự khởi động** server nếu chưa chạy (log ở `data/server.log`).
 - `send_message` và `reply_comment` gửi THẬT tới khách. Luôn soạn nháp và xin người dùng duyệt trước khi gửi, trừ khi họ nói rõ là cứ gửi.
 - Ngoài cửa sổ 24 giờ (`can_reply = false`) không gửi tin thường được: dùng `add_note` hoặc message tag đúng mục đích.
-- Chưa có trang nào: gọi `connection_status` và hướng dẫn người dùng mở `#/connect`.
+- `create_post` đăng bài CÔNG KHAI: cho người dùng xem bản cuối và xin xác nhận trước. Đọc bài bằng `list_posts` rồi `get_post`.
+- Chưa có trang nào: gọi `facebook_login` để lấy link đăng nhập cho người dùng. Claude không đăng nhập Facebook thay người dùng được.
+- Đăng bài cần quyền `pages_manage_posts`: trang kết nối từ trước cần đăng nhập lại để cấp quyền này.
 - Lệnh tắt: `/tra-loi-khach`, `/bao-cao-fanpage`.
 
 ## Cấu trúc mã
 
-- `server/` Express + SQLite: `facebook.js` (cấu hình App, OAuth, nhập trang), `graph.js` (Graph API), `webhook.js`, `sync.js`, `messaging.js`, `autoreply.js`, `store.js`, `routes.js` (REST `/api`), `demo.js`.
+- `server/` Express + SQLite: `facebook.js` (cấu hình App, OAuth, nhập trang), `posts.js` (đăng/đọc/xoá bài), `graph.js` (Graph API), `webhook.js`, `sync.js`, `messaging.js`, `autoreply.js`, `store.js`, `routes.js` (REST `/api`), `demo.js`.
 - `public/` giao diện HTML/CSS/JS thuần, một file `app.js`.
 - `mcp/server.js` MCP server (SDK `@modelcontextprotocol/sdk`, zod 4).
 

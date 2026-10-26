@@ -12,11 +12,12 @@ Bộ công cụ tự cài để theo dõi và quản lý fanpage Facebook: hộp
 |---|---|
 | Tổng quan | Hội thoại cần trả lời, tin chưa đọc, bình luận chờ xử lý, thời gian phản hồi trung bình, biểu đồ 14 ngày |
 | Hộp thư | Lọc theo trạng thái, tìm kiếm, trả lời, đính kèm ảnh/tệp qua URL, ghi chú nội bộ, nhãn, người phụ trách, cảnh báo cửa sổ 24 giờ, message tag |
+| Bài viết | Đăng bài chữ, link hoặc ảnh, hẹn giờ đăng, đọc bài kèm toàn bộ bình luận, xoá bài |
 | Bình luận | Danh sách bình luận chưa trả lời, trả lời công khai, gửi kèm tin nhắn riêng (private reply), ẩn/hiện, xoá |
 | Tự động hoá | Luật trả lời theo từ khoá cho tin nhắn và bình luận, câu trả lời nhanh gõ bằng `/`, trả lời ngoài giờ làm việc |
 | Thời gian thực | Cập nhật tức thì qua Server-Sent Events, âm báo và thông báo trình duyệt |
 | Kết nối | Màn hình hướng dẫn 4 bước: nhập App Facebook, **Đăng nhập với Facebook** để chọn fanpage, webhook, cấu hình Claude |
-| Claude (MCP) | 24 công cụ để Claude xem, trả lời, gắn nhãn, xử lý bình luận, tạo luật tự động, 2 prompt mẫu, lệnh tắt cho Claude Code |
+| Claude (MCP) | 31 công cụ: đọc và trả lời tin nhắn, đọc và đăng bài, xử lý bình luận, hỗ trợ đăng nhập page, tạo luật tự động; 2 prompt mẫu, lệnh tắt cho Claude Code |
 
 ## Chạy thử ngay (không cần Facebook)
 
@@ -67,7 +68,9 @@ Nên đặt `ADMIN_PASSWORD` nếu server mở ra Internet. Mọi cấu hình Ap
 
 ### 4. Quyền được xin khi đăng nhập
 
-`pages_show_list`, `pages_messaging`, `pages_manage_metadata`, `pages_read_engagement`, `pages_manage_engagement`, `pages_read_user_content`.
+`pages_show_list`, `pages_messaging`, `pages_manage_metadata`, `pages_read_engagement`, `pages_manage_engagement`, `pages_read_user_content`, `pages_manage_posts` (đăng bài).
+
+Trang đã kết nối trước khi có tính năng đăng bài cần đăng nhập Facebook lại một lần để cấp thêm quyền `pages_manage_posts`.
 
 ### 5. Cấu hình webhook (để nhận tin tức thì)
 
@@ -132,7 +135,9 @@ Thêm vào `%APPDATA%\Claude\claude_desktop_config.json`:
 
 | Nhóm | Công cụ |
 |---|---|
-| Xem | `connection_status`, `fanpage_overview`, `list_pages`, `list_conversations`, `get_conversation`, `search_messages`, `list_comments`, `list_posts`, `list_quick_replies`, `list_auto_rules`, `recent_activity` |
+| Xem | `fanpage_overview`, `list_pages`, `list_conversations`, `get_conversation`, `search_messages`, `list_comments`, `list_quick_replies`, `list_auto_rules`, `recent_activity` |
+| Bài viết | `list_posts`, `get_post` (nội dung + bình luận), `create_post` (chữ, link, ảnh, hẹn giờ), `delete_post` |
+| Đăng nhập page | `connection_status`, `facebook_login` (trả link đăng nhập), `configure_facebook_app`, `connect_pages_with_token`, `subscribe_page_webhook` |
 | Tin nhắn | `send_message`, `add_note`, `update_conversation`, `mark_read` |
 | Bình luận | `reply_comment`, `hide_comment`, `mark_comment_handled`, `delete_comment` |
 | Quản trị | `sync_page`, `create_auto_rule`, `update_auto_rule`, `delete_auto_rule`, `create_quick_reply` |
@@ -144,6 +149,8 @@ Ví dụ yêu cầu cho Claude:
 - "Xem các tin nhắn đang chờ trên fanpage và soạn câu trả lời cho tôi duyệt."
 - "Ẩn các bình luận spam quảng cáo trên bài viết mới nhất."
 - "Tạo luật tự động trả lời khi khách hỏi phí ship."
+- "Soạn bài giới thiệu bộ sưu tập mới, hẹn đăng 9 giờ sáng mai, cho tôi duyệt trước."
+- "Tôi chưa kết nối fanpage, hướng dẫn tôi đăng nhập."
 
 Tin gửi qua Claude được đánh dấu "🤖 Claude" trong giao diện. `send_message` và `reply_comment` gửi thật tới khách, nên hướng dẫn trong MCP yêu cầu Claude xin xác nhận trước khi gửi.
 
@@ -155,6 +162,7 @@ server/
   config.js     Đọc .env
   db.js         Lược đồ SQLite
   facebook.js   Cấu hình App, đăng nhập Facebook (OAuth), nhập fanpage
+  posts.js      Đăng, đọc, xoá bài viết
   graph.js      Gọi Facebook Graph API, diễn giải lỗi sang tiếng Việt
   webhook.js    Xác minh và xử lý sự kiện webhook (tin nhắn, bình luận)
   sync.js       Đồng bộ định kỳ từ Graph API

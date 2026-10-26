@@ -325,11 +325,13 @@ export function patchConversation(convId, { status, assigned, tags, note }) {
 
 export function upsertPost(pageId, p) {
   run(
-    `INSERT INTO posts(id,page_id,message,created_time,permalink_url,picture,likes,comments_count,shares,updated_at)
-     VALUES(?,?,?,?,?,?,?,?,?,?)
-     ON CONFLICT(id) DO UPDATE SET message=excluded.message, permalink_url=excluded.permalink_url,
-       picture=excluded.picture, likes=excluded.likes, comments_count=excluded.comments_count,
-       shares=excluded.shares, updated_at=excluded.updated_at`,
+    `INSERT INTO posts(id,page_id,message,created_time,permalink_url,picture,likes,comments_count,shares,updated_at,status,scheduled_time,source)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET message=excluded.message,
+       permalink_url=COALESCE(NULLIF(excluded.permalink_url,''),posts.permalink_url),
+       picture=COALESCE(NULLIF(excluded.picture,''),posts.picture), likes=excluded.likes, comments_count=excluded.comments_count,
+       shares=excluded.shares, updated_at=excluded.updated_at, status=excluded.status,
+       scheduled_time=COALESCE(excluded.scheduled_time,posts.scheduled_time)`,
     p.id,
     pageId,
     p.message || p.story || '',
@@ -340,17 +342,25 @@ export function upsertPost(pageId, p) {
     p.comments?.summary?.total_count ?? 0,
     p.shares?.count ?? 0,
     nowIso(),
+    p._status || 'published',
+    p._scheduled_time || null,
+    p._source || 'sync',
   );
+  return getPost(p.id);
+}
+export function setPostStatus(id, status) {
+  run('UPDATE posts SET status=?, updated_at=? WHERE id=?', status, nowIso(), id);
 }
 export function listPosts(pageId, limit = 50) {
   const sql = `SELECT p.*, pg.name AS page_name,
       (SELECT COUNT(*) FROM comments c WHERE c.post_id=p.id AND c.is_page=0 AND c.replied=0 AND c.removed=0 AND c.is_hidden=0) AS pending_comments
      FROM posts p LEFT JOIN pages pg ON pg.id=p.page_id
-     ${pageId ? 'WHERE p.page_id=?' : ''} ORDER BY p.created_time DESC LIMIT ?`;
+     WHERE p.status<>'deleted' ${pageId ? 'AND p.page_id=?' : ''}
+     ORDER BY COALESCE(p.scheduled_time, p.created_time) DESC LIMIT ?`;
   return pageId ? all(sql, pageId, limit) : all(sql, limit);
 }
 export function getPost(id) {
-  return get('SELECT * FROM posts WHERE id=?', id);
+  return get('SELECT p.*, pg.name AS page_name FROM posts p LEFT JOIN pages pg ON pg.id=p.page_id WHERE p.id=?', id);
 }
 
 /** Lưu bình luận; trả về true nếu mới. */

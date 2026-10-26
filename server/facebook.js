@@ -15,6 +15,7 @@ export const FB_SCOPES = [
   'pages_read_engagement',
   'pages_manage_engagement',
   'pages_read_user_content',
+  'pages_manage_posts',
 ];
 
 const fromEnv = { appId: config.appId, appSecret: config.appSecret, verifyToken: config.verifyToken, publicUrl: config.publicUrl };

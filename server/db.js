@@ -141,6 +141,15 @@ CREATE TABLE IF NOT EXISTS activity (
 );
 `);
 
+// Nâng cấp CSDL cũ: thêm cột nếu chưa có
+function addColumn(table, col, def) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+}
+addColumn('posts', 'status', "TEXT NOT NULL DEFAULT 'published'"); // published | scheduled | deleted
+addColumn('posts', 'scheduled_time', 'TEXT');
+addColumn('posts', 'source', "TEXT DEFAULT 'sync'"); // sync | app | mcp | webhook | demo
+
 export const nowIso = () => new Date().toISOString();
 
 export function toIso(v) {
